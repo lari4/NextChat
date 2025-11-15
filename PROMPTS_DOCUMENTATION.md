@@ -84,3 +84,64 @@ New Conversation
 ```
 
 ---
+
+## 2. Conversation Management Prompts
+
+These prompts handle automatic conversation features like title generation, summarization, and context management.
+
+### 2.1 Conversation Title Generation
+
+**Location:** `app/locales/en.ts:648-649`, used in `app/store/chat.ts:705`
+
+**Purpose:** Automatically generates a concise 4-5 word title summarizing the conversation topic. This prompt instructs the AI to create a clean, unformatted title without punctuation or extra text.
+
+**Prompt:**
+```
+Please generate a four to five word title summarizing our conversation without any lead-in, punctuation, quotation marks, periods, symbols, bold text, or additional text. Remove enclosing quotation marks.
+```
+
+**Implementation Notes:**
+- Triggered automatically after the first user message
+- Helps organize and identify conversations quickly
+- Returns plain text without formatting
+
+---
+
+### 2.2 Conversation Summarization
+
+**Location:** `app/locales/en.ts:650-651`, used in `app/store/chat.ts:770`
+
+**Purpose:** Creates a concise summary of the conversation (max 200 words) to use as context for future messages. This helps compress long conversation histories while retaining important information.
+
+**Prompt:**
+```
+Summarize the discussion briefly in 200 words or less to use as a prompt for future context.
+```
+
+**Implementation Notes:**
+- Used for long-term memory compression
+- Helps maintain context when conversation exceeds token limits
+- Summary is stored and can be injected into future requests
+
+---
+
+### 2.3 History Context Prefix
+
+**Location:** `app/locales/en.ts:646-647`, used in `app/store/chat.ts:536`
+
+**Purpose:** Prefixes summarized conversation history when injecting it as context into new messages. This helps the AI understand that the following text is a recap of previous conversation.
+
+**Prompt Template:**
+```
+This is a summary of the chat history as a recap: {content}
+```
+
+**Template Variables:**
+- `{content}` - The summarized conversation history text
+
+**Implementation Notes:**
+- Used in conjunction with conversation summarization
+- Provides clear context boundary between summary and current conversation
+- Helps AI distinguish between actual history and summary
+
+---
