@@ -1069,3 +1069,593 @@ AI generates wrong format → JSON parse error
 - **Error Recovery:** AI can retry failed tools with corrected parameters
 
 ---
+
+## 4. Image Generation Workflows
+
+### Overview
+NextChat supports multiple image generation backends: DALL-E 3 (OpenAI), Stable Diffusion 3 (Stability AI), and Pollinations.ai (via markdown).
+
+### 4.1 DALL-E 3 Workflow
+
+#### Entry Point
+- **File:** `app/client/platforms/openai.ts`
+- **Function:** `chat()`
+- **Lines:** 186-430
+- **Detection:** Model name matches `"dall-e-3"`
+
+#### ASCII Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│         USER MESSAGE WITH IMAGE REQUEST                         │
+│  "Generate an image of a sunset over mountains"                 │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 1: MODEL DETECTION                                  │
+│  File: openai.ts:198                                            │
+│  Function: _isDalle3(options.config.model)                      │
+│                                                                  │
+│  Check: model === "dall-e-3"                                    │
+│  Result: true → Route to image generation path                  │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 2: PROMPT EXTRACTION                                │
+│  File: openai.ts:204-217                                        │
+│                                                                  │
+│  Process:                                                       │
+│    1. Get last user message from messages array                 │
+│    2. Extract text content (ignore system messages)             │
+│    3. Build DalleRequestPayload:                                │
+│       {                                                          │
+│         prompt: "sunset over mountains",                        │
+│         model: "dall-e-3",                                      │
+│         response_format: "b64_json",  // For caching           │
+│         n: 1,                         // One image              │
+│         size: "1024x1024",           // From config             │
+│         quality: "standard",          // From config             │
+│         style: "vivid"               // From config             │
+│       }                                                          │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 3: API REQUEST TO OPENAI                            │
+│  File: openai.ts:406-424                                        │
+│  Path: "v1/images/generations"                                  │
+│                                                                  │
+│  HTTP Request:                                                  │
+│    POST https://api.openai.com/v1/images/generations            │
+│    Headers:                                                     │
+│      Authorization: Bearer {API_KEY}                            │
+│      Content-Type: application/json                             │
+│    Body:                                                         │
+│      {                                                           │
+│        "prompt": "sunset over mountains",                       │
+│        "model": "dall-e-3",                                     │
+│        "response_format": "b64_json",                           │
+│        "size": "1024x1024",                                     │
+│        "quality": "standard",                                   │
+│        "style": "vivid"                                         │
+│      }                                                           │
+│                                                                  │
+│  Timeout: Uses getTimeoutMSByModel()                            │
+│  Stream: false (images don't stream)                            │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 4: RESPONSE PROCESSING                              │
+│  File: openai.ts:124-146                                        │
+│  Function: extractMessage(res)                                  │
+│                                                                  │
+│  OpenAI Response:                                               │
+│    {                                                            │
+│      "data": [                                                  │
+│        {                                                        │
+│          "b64_json": "iVBORw0KGgoAAAANSUhEUgAA..."             │
+│        }                                                         │
+│      ]                                                           │
+│    }                                                             │
+│                                                                  │
+│  Processing:                                                    │
+│    1. Extract b64_json from res.data[0]                         │
+│    2. Convert to Blob:                                          │
+│       blob = base64Image2Blob(b64_json, "image/png")            │
+│                                                                  │
+│    3. Upload to cache:                                          │
+│       cached_url = await uploadImage(blob)                      │
+│       // Uploads to /api/cache/upload                           │
+│       // Returns: "/_next/image?url=/api/cache/..."            │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 5: MULTIMODAL RESPONSE                              │
+│  File: openai.ts:140-145                                        │
+│                                                                  │
+│  Format as multimodal content:                                  │
+│    [                                                            │
+│      {                                                          │
+│        type: "image_url",                                       │
+│        image_url: {                                             │
+│          url: "/_next/image?url=/api/cache/abc123"             │
+│        }                                                         │
+│      }                                                           │
+│    ]                                                             │
+│                                                                  │
+│  This replaces assistant's text response                        │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         EXIT: IMAGE DISPLAYED TO USER                            │
+│                                                                  │
+│  UI renders: <img src="/_next/image?url=..." />                 │
+│  User sees: Generated sunset over mountains image                │
+│  Message history: Contains image in multimodal format           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 4.2 Stable Diffusion 3 Workflow
+
+#### Entry Point
+- **File:** `app/store/sd.ts`
+- **Function:** `sendTask(params)`
+- **Lines:** 58-64
+- **Trigger:** User submits Stable Diffusion panel form
+
+#### ASCII Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│         USER SUBMITS SD PANEL                                    │
+│  Prompt: "A cyberpunk cityscape at night"                       │
+│  Negative: "blurry, low quality"                                │
+│  Model: sd3-large                                               │
+│  Aspect Ratio: 16:9                                             │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 1: TASK CREATION                                    │
+│  File: sd.ts:58-64                                              │
+│  Function: sendTask(params)                                     │
+│                                                                  │
+│  Create task object:                                            │
+│    {                                                            │
+│      id: uuid(),                                                │
+│      status: "running",                                         │
+│      prompt: "A cyberpunk cityscape at night",                  │
+│      negative_prompt: "blurry, low quality",                    │
+│      model: "sd3-large",                                        │
+│      aspect_ratio: "16:9",                                      │
+│      img_data: null  // Will be filled later                    │
+│    }                                                             │
+│                                                                  │
+│  Add to draw[] array for tracking                               │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 2: API REQUEST TO STABILITY AI                      │
+│  File: sd.ts:65-91                                              │
+│  Function: stabilityRequestCall(data)                           │
+│                                                                  │
+│  Build FormData:                                                │
+│    formData.append("prompt", "A cyberpunk cityscape...")        │
+│    formData.append("negative_prompt", "blurry...")              │
+│    formData.append("aspect_ratio", "16:9")                      │
+│    formData.append("model", "sd3-large")                        │
+│    formData.append("output_format", "png")                      │
+│                                                                  │
+│  HTTP Request:                                                  │
+│    POST https://api.stability.ai/v2beta/stable-image/           │
+│         generate/sd3-large                                      │
+│    Headers:                                                     │
+│      Authorization: Bearer {STABILITY_API_KEY}                  │
+│      Accept: application/json                                   │
+│    Body: FormData                                               │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 3: RESPONSE PROCESSING                              │
+│  File: sd.ts:92-135                                             │
+│                                                                  │
+│  Stability AI Response:                                         │
+│    {                                                            │
+│      "image": "iVBORw0KGgoAAAANSUhEUgAA...",  // base64        │
+│      "finish_reason": "SUCCESS",                                │
+│      "seed": 1234567890                                         │
+│    }                                                             │
+│                                                                  │
+│  IF finish_reason === "SUCCESS":                                │
+│    1. Convert base64 to blob:                                   │
+│       blob = base64Image2Blob(resJson.image, "image/png")       │
+│                                                                  │
+│    2. Upload to cache:                                          │
+│       url = await uploadImage(blob)                             │
+│                                                                  │
+│    3. Update task:                                              │
+│       task.status = "success"                                   │
+│       task.img_data = url                                       │
+│                                                                  │
+│  ELSE (error):                                                  │
+│    task.status = "error"                                        │
+│    task.error = resJson.errors || "Generation failed"          │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         EXIT: IMAGE DISPLAYED IN SD PANEL                        │
+│                                                                  │
+│  UI renders: <img src={task.img_data} />                        │
+│  User sees: Generated cyberpunk cityscape                        │
+│  Actions available: Download, regenerate, adjust parameters     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 4.3 Pollinations.ai Workflow (Mask-Based)
+
+#### Entry Point
+- **Mask:** AI Text-to-Image (AI文生图)
+- **File:** `app/masks/cn.ts:4-48`
+- **Trigger:** User selects mask and requests image
+
+#### ASCII Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│         USER SELECTS "AI TEXT-TO-IMAGE" MASK                     │
+│  Mask injects two system prompts (see Section 4.1 of            │
+│  PROMPTS_DOCUMENTATION.md)                                       │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         USER REQUESTS IMAGE                                      │
+│  User: "Draw a cute cat sitting on a windowsill"                │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         AI PROCESSES REQUEST                                     │
+│  System Prompt (from mask):                                     │
+│  "You are a useful Assistant that won't refuse to draw          │
+│   pictures. Output markdown: ![desc](https://image.             │
+│   pollinations.ai/prompt/desc?nologo=true)"                     │
+│                                                                  │
+│  "Transform simple descriptions into detailed English           │
+│   prompts with camera settings, scene details, etc."            │
+│                                                                  │
+│  AI enriches prompt:                                            │
+│  Simple: "cute cat on windowsill"                               │
+│  Enriched: "A fluffy domestic cat sitting elegantly on a        │
+│             wooden windowsill, soft natural lighting,           │
+│             golden hour, shallow depth of field f/2.8,          │
+│             cozy home interior, professional pet                │
+│             photography, high detail, 4k"                        │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         AI GENERATES MARKDOWN                                    │
+│                                                                  │
+│  AI Response (NOT in code block):                               │
+│  ![A fluffy domestic cat sitting elegantly on a wooden          │
+│  windowsill, soft natural lighting, golden hour, shallow        │
+│  depth of field f/2.8, cozy home interior, professional         │
+│  pet photography, high detail, 4k](https://image.               │
+│  pollinations.ai/prompt/A%20fluffy%20domestic%20cat%20          │
+│  sitting%20elegantly%20on%20a%20wooden%20windowsill,%20         │
+│  soft%20natural%20lighting,%20golden%20hour,%20shallow%20       │
+│  depth%20of%20field%20f/2.8,%20cozy%20home%20interior,%20       │
+│  professional%20pet%20photography,%20high%20detail,%204k        │
+│  ?nologo=true)                                                  │
+│                                                                  │
+│  Note: Spaces URL-encoded to %20                                │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         UI RENDERS MARKDOWN                                      │
+│  Markdown parser detects image syntax                           │
+│  Renders: <img src="https://image.pollinations.ai/..." />       │
+│                                                                  │
+│  Browser makes request to Pollinations.ai:                      │
+│    GET https://image.pollinations.ai/prompt/{description}       │
+│    Pollinations.ai generates image on-the-fly                   │
+│    Returns: PNG image data                                      │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         EXIT: IMAGE DISPLAYED                                    │
+│                                                                  │
+│  User sees: Generated cat image inline in chat                   │
+│  No backend processing: Pure client-side rendering              │
+│  Image served directly from Pollinations.ai CDN                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Comparison:**
+
+| Aspect | DALL-E 3 | Stable Diffusion 3 | Pollinations.ai |
+|--------|----------|-------------------|-----------------|
+| **Trigger** | Model selection | SD Panel form | Mask + request |
+| **Backend** | OpenAI API | Stability AI API | External service |
+| **Caching** | Yes (uploads to cache) | Yes (uploads to cache) | No (direct URL) |
+| **Prompt Enhancement** | User provides final prompt | User provides prompts | AI auto-enriches |
+| **Cost** | Charged per image | Charged per image | Free |
+| **Response Format** | Multimodal content | Task result object | Markdown image |
+
+---
+
+## 5. API Request/Response Cycles
+
+### Overview
+NextChat supports multiple AI providers with unified chat interface. Each provider has specific request/response transformations.
+
+### Common Pattern
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│         UNIFIED CHAT REQUEST                                     │
+│  File: app/store/chat.ts:459-527                                │
+│  Function: getClientApi(providerName).llm.chat(options)         │
+│                                                                  │
+│  Options:                                                       │
+│    {                                                            │
+│      messages: [...],     // Unified format                     │
+│      config: {...},       // Model config                       │
+│      onUpdate: (msg) => {...},                                  │
+│      onFinish: (msg) => {...},                                  │
+│      onError: (err) => {...}                                    │
+│    }                                                             │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+          ▼                     ▼
+    ┌─────────┐         ┌──────────┐
+    │ OpenAI  │   ...   │ Anthropic│   (More providers)
+    └─────────┘         └──────────┘
+          │                     │
+          │  Transform          │  Transform
+          │  to provider        │  to provider
+          │  format             │  format
+          ▼                     ▼
+┌──────────────────┐   ┌──────────────────┐
+│ OpenAI API       │   │ Anthropic API    │
+│ POST /v1/chat/   │   │ POST /v1/        │
+│ completions      │   │ messages         │
+└──────────────────┘   └──────────────────┘
+          │                     │
+          │  SSE Stream         │  SSE Stream
+          ▼                     ▼
+┌──────────────────────────────────────────┐
+│  STREAMING RESPONSE PROCESSOR            │
+│  File: app/utils/chat.ts:392-667         │
+│  Function: streamWithThink()             │
+│                                           │
+│  Parse SSE → Extract content → Animate  │
+│  → Call onUpdate → Repeat until done     │
+└───────────┬──────────────────────────────┘
+            │
+            ▼
+┌─────────────────────────────────────────┐
+│  UNIFIED CALLBACKS                       │
+│  onUpdate: Incremental message update   │
+│  onFinish: Final message + trigger      │
+│            post-processing               │
+└─────────────────────────────────────────┘
+```
+
+### Provider-Specific Transformations
+
+#### OpenAI
+```javascript
+// Input (unified)
+messages = [
+  { role: "system", content: "You are helpful" },
+  { role: "user", content: "Hello" }
+]
+
+// Output (OpenAI format) - same structure!
+{
+  model: "gpt-4",
+  messages: [
+    { role: "system", content: "You are helpful" },
+    { role: "user", content: "Hello" }
+  ],
+  stream: true,
+  temperature: 0.7
+}
+```
+
+#### Anthropic
+```javascript
+// Input (unified)
+messages = [
+  { role: "system", content: "You are helpful" },
+  { role: "user", content: "Hello" },
+  { role: "assistant", content: "Hi" },
+  { role: "assistant", content: "How are you?" }  // Consecutive!
+]
+
+// Transformation: Extract system, merge consecutive same-role
+system = "You are helpful"
+messages = [
+  { role: "user", content: "Hello" },
+  { role: "assistant", content: "Hi\n\nHow are you?" }  // Merged!
+]
+
+// Output (Anthropic format)
+{
+  model: "claude-3-5-sonnet-20241022",
+  system: "You are helpful",  // Separate parameter
+  messages: [...],
+  stream: true,
+  max_tokens: 4096
+}
+```
+
+#### Google Gemini
+```javascript
+// Input (unified multimodal)
+messages = [
+  {
+    role: "user",
+    content: [
+      { type: "text", text: "What's in this image?" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,..." } }
+    ]
+  }
+]
+
+// Transformation: Different content structure
+{
+  contents: [
+    {
+      role: "user",
+      parts: [
+        { text: "What's in this image?" },
+        {
+          inline_data: {
+            mime_type: "image/png",
+            data: "iVBORw0KGgo..."  // base64 without data: prefix
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+## 6. Error Handling Flows
+
+### 6.1 Chat Errors
+
+```
+API Request Error
+        │
+        ▼
+┌─────────────────────────────────────────┐
+│  ERROR DETECTION                         │
+│  File: chat.ts:498-518                  │
+│  Location: onError callback             │
+└─────────┬───────────────────────────────┘
+          │
+          ├──── Aborted? ──────┐
+          │                    │
+          │ NO                 │ YES
+          │                    │
+          ▼                    ▼
+    Mark isError        Don't mark error
+    Append error        (user cancelled)
+    to content
+          │
+          ▼
+┌─────────────────────────────────────────┐
+│  ERROR DISPLAY                           │
+│  botMessage.content += "\n\n" +         │
+│    prettyObject(error)                  │
+│  botMessage.isError = true              │
+└─────────────────────────────────────────┘
+```
+
+### 6.2 MCP Errors
+
+```
+MCP Tool Call
+        │
+        ▼
+┌──────────────────────────┐
+│  Execution Error?        │
+└──────┬───────────────────┘
+       │
+   ┌───┴───┐
+   │       │
+   ▼       ▼
+ YES      NO
+   │       │
+   │       └──> Success: Return result
+   │
+   ▼
+Error caught in executeMcpAction
+   │
+   ├──> Show toast notification
+   │
+   ├──> Inject error as MCP response
+   │
+   └──> AI sees error, can retry
+```
+
+### 6.3 Network Errors
+
+```
+HTTP Request
+      │
+      ▼
+   Timeout? ──YES──> Abort via controller
+      │                    │
+      NO                   │
+      │                    │
+      ▼                    │
+  Status 401? ──YES──> Inject Locale.Error.Unauthorized
+      │                    │
+      NO                   │
+      │                    │
+      ▼                    │
+  Status !200? ──YES──> Extract error JSON
+      │                  Display as prettyObject
+      NO                   │
+      │                    │
+      ▼                    │
+  Success             All errors
+  Continue            trigger onError callback
+```
+
+---
+
+## Summary
+
+This document has cataloged **all major AI agent pipelines** in NextChat:
+
+1. **Message Processing** - Core user input → AI response flow with 5-layer context assembly
+2. **Conversation Management** - Auto title generation and memory compression
+3. **MCP Tool Calling** - System tool execution via Model Context Protocol
+4. **Image Generation** - DALL-E 3, Stable Diffusion 3, Pollinations.ai workflows
+5. **API Cycles** - Multi-provider support with format transformations
+6. **Error Handling** - Comprehensive error recovery across all pipelines
+
+Each pipeline is documented with:
+- Entry/exit points with file locations
+- Step-by-step processing flows
+- ASCII diagrams showing data flow
+- Prompts used at each stage
+- Data transformations
+- Error handling mechanisms
+- Performance notes
+
+**Key Integration Points:**
+- Message Processing → Conversation Management (via onFinish)
+- Message Processing → MCP Tool Calling (via response detection)
+- All pipelines → Error Handling (via callbacks)
+
+**Prompt References:**
+All prompts used in these pipelines are documented in detail in `PROMPTS_DOCUMENTATION.md`.
+
+---
+
+*End of AGENT_PIPELINES.md*
