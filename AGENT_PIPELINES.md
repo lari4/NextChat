@@ -609,3 +609,463 @@ Title Generation  Summarization  Continue Chat
 ```
 
 ---
+
+## 3. MCP Tool Calling Pipeline
+
+### Overview
+The Model Context Protocol (MCP) pipeline enables the AI to execute system tools and primitives. The AI detects when it needs a tool, generates properly formatted JSON, the system executes the tool, and returns results for the AI to process.
+
+### Entry Point
+- **File:** `app/store/chat.ts`
+- **Function:** `checkMcpJson(message)`
+- **Lines:** 826-856
+- **Trigger:** After AI generates a response containing MCP JSON code block
+
+### MCP System Initialization
+
+Before tools can be called, MCP clients must be initialized:
+
+**File:** `app/mcp/actions.ts`
+- **Function:** `initializeMcpSystem()` (lines 142-161)
+- **Config:** Loaded from `app/mcp/mcp_config.json`
+
+```
+Application Startup
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         MCP SYSTEM INITIALIZATION                                │
+│  File: app/mcp/actions.ts:142-161                               │
+│                                                                  │
+│  FOR EACH server in mcp_config.json:                            │
+│    1. Create StdioClientTransport                               │
+│       - command: e.g., "npx"                                    │
+│       - args: e.g., ["-y", "@modelcontextprotocol/server-fs"]   │
+│       - env: Environment variables                              │
+│                                                                  │
+│    2. Initialize MCP Client                                     │
+│       - Connect to transport                                    │
+│       - Exchange capabilities                                   │
+│                                                                  │
+│    3. List Available Tools                                      │
+│       - Call client.listTools()                                 │
+│       - Store tool definitions                                  │
+│                                                                  │
+│    4. Store in clientsMap                                       │
+│       clientsMap[serverId] = {                                  │
+│         client: mcpClient,                                      │
+│         tools: toolsList,                                       │
+│         status: "active",                                       │
+│         errorMsg: null                                          │
+│       }                                                          │
+│                                                                  │
+│  Example Tools for "filesystem" server:                         │
+│    - list_allowed_directories                                   │
+│    - read_file                                                  │
+│    - write_file                                                 │
+│    - list_directory                                             │
+│    - create_directory                                           │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Tool Calling Flow
+
+#### ASCII Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│         USER REQUEST NEEDS TOOL                                  │
+│  "List the files in my documents folder"                        │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 1: AI RESPONSE WITH MCP JSON                        │
+│  File: Message Processing Pipeline (Section 1)                  │
+│                                                                  │
+│  AI receives MCP_SYSTEM_TEMPLATE prompt instructing:            │
+│  Location: app/constant.ts:306-421                              │
+│                                                                  │
+│  Key Instructions:                                              │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ 2. WHEN TO USE TOOLS:                                     │ │
+│  │    - ALWAYS USE TOOLS when they can help                  │ │
+│  │    - DO NOT just describe - TAKE ACTION immediately       │ │
+│  │                                                            │ │
+│  │ 3. HOW TO USE TOOLS:                                      │ │
+│  │    A. Tool Call Format:                                   │ │
+│  │       ```json:mcp:{clientId}```                           │ │
+│  │       {                                                    │ │
+│  │         "method": "tools/call",                           │ │
+│  │         "params": {                                        │ │
+│  │           "name": "tool_name",                            │ │
+│  │           "arguments": { ... }                            │ │
+│  │         }                                                  │ │
+│  │       }                                                    │ │
+│  │                                                            │ │
+│  │    C. Important Rules:                                    │ │
+│  │       - Only use tools/call method                        │ │
+│  │       - Only ONE tool call per message                    │ │
+│  │       - ALWAYS TAKE ACTION (no asking permission)         │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  AI Generates:                                                  │
+│  ```json:mcp:filesystem                                         │
+│  {                                                               │
+│    "method": "tools/call",                                      │
+│    "params": {                                                  │
+│      "name": "list_directory",                                 │
+│      "arguments": {                                             │
+│        "path": "/Users/username/Documents"                     │
+│      }                                                           │
+│    }                                                             │
+│  }                                                               │
+│  ```                                                             │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 2: MCP JSON DETECTION                               │
+│  File: chat.ts:826-856                                          │
+│  Function: checkMcpJson(message)                                │
+│                                                                  │
+│  Sub-function: isMcpJson(content)                               │
+│  File: app/mcp/utils.ts:1-3                                     │
+│  Pattern: /```json:mcp:([^{\s]+)([\s\S]*?)```/                 │
+│                                                                  │
+│  Process:                                                       │
+│    1. Check if message.content contains MCP JSON pattern        │
+│    2. If NOT found → return false (normal message flow)         │
+│    3. If FOUND → Extract and process                            │
+└────────────────────┬────────────────────────────────────────────┘
+                     │ MCP JSON DETECTED
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 3: EXTRACTION                                       │
+│  Function: extractMcpJson(content)                              │
+│  File: app/mcp/utils.ts:5-11                                    │
+│                                                                  │
+│  Extracts:                                                      │
+│    {                                                            │
+│      clientId: "filesystem",  // From code block tag           │
+│      mcp: {                   // Parsed JSON object            │
+│        method: "tools/call",                                    │
+│        params: {                                                │
+│          name: "list_directory",                               │
+│          arguments: {                                           │
+│            path: "/Users/username/Documents"                   │
+│          }                                                       │
+│        }                                                         │
+│      }                                                           │
+│    }                                                             │
+│                                                                  │
+│  Validation:                                                    │
+│    - clientId must exist                                        │
+│    - JSON must be valid                                         │
+│    - method must be "tools/call"                                │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 4: TOOL EXECUTION                                   │
+│  File: app/mcp/actions.ts:337-352                               │
+│  Function: executeMcpAction(clientId, mcpRequest)               │
+│                                                                  │
+│  Process:                                                       │
+│    1. Retrieve client from clientsMap:                          │
+│       const clientInfo = clientsMap.get(clientId)               │
+│                                                                  │
+│    2. Check client status:                                      │
+│       IF status !== "active" → throw error                      │
+│                                                                  │
+│    3. Execute via MCP SDK:                                      │
+│       File: app/mcp/client.ts:50-55                             │
+│       Function: executeRequest(client, request)                 │
+│                                                                  │
+│       Uses @modelcontextprotocol/sdk:                           │
+│       result = await client.request(                            │
+│         {                                                        │
+│           method: "tools/call",                                 │
+│           params: {                                              │
+│             name: "list_directory",                             │
+│             arguments: { path: "/Users/username/Documents" }    │
+│           }                                                      │
+│         },                                                       │
+│         CallToolResultSchema                                    │
+│       )                                                          │
+│                                                                  │
+│    4. Tool executes (in MCP server process):                    │
+│       - Reads directory via Node.js fs module                   │
+│       - Returns file list                                       │
+│                                                                  │
+│  Result Example:                                                │
+│    {                                                            │
+│      content: [                                                 │
+│        {                                                        │
+│          type: "text",                                          │
+│          text: "file1.txt\nfile2.pdf\nsubfolder/"              │
+│        }                                                         │
+│      ]                                                           │
+│    }                                                             │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 5: RESPONSE INJECTION                               │
+│  File: chat.ts:838-849                                          │
+│                                                                  │
+│  Format result as MCP response:                                 │
+│    content = ```json:mcp-response:${clientId}                   │
+│    ${JSON.stringify(result, null, 2)}                           │
+│    ```                                                           │
+│                                                                  │
+│  Example:                                                       │
+│    ```json:mcp-response:filesystem                              │
+│    {                                                             │
+│      "content": [                                               │
+│        {                                                        │
+│          "type": "text",                                        │
+│          "text": "file1.txt\nfile2.pdf\nsubfolder/"            │
+│        }                                                         │
+│      ]                                                           │
+│    }                                                             │
+│    ```                                                           │
+│                                                                  │
+│  Call onUserInput() with:                                       │
+│    - content: formatted MCP response                            │
+│    - isMcpResponse: true (skips template filling)               │
+│                                                                  │
+│  This triggers a NEW request to AI with tool result!            │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         STEP 6: AI PROCESSES TOOL RESULT                         │
+│  Back to Message Processing Pipeline (Section 1)                │
+│                                                                  │
+│  Messages sent to AI:                                           │
+│    [                                                            │
+│      { role: "user",                                            │
+│        content: "List the files in my documents folder" },      │
+│      { role: "assistant",                                       │
+│        content: "```json:mcp:filesystem\n{...}\n```" },         │
+│      { role: "user",  ← Tool result injected as user message   │
+│        content: "```json:mcp-response:filesystem\n{...}\n```" } │
+│    ]                                                             │
+│                                                                  │
+│  AI understands it received tool result and responds:           │
+│    "I found 3 items in your Documents folder:                   │
+│     - file1.txt                                                 │
+│     - file2.pdf                                                 │
+│     - subfolder/ (directory)"                                   │
+└────────────────────┬────────────────────────────────────────────┘
+                     │
+                     ▼
+┌─────────────────────────────────────────────────────────────────┐
+│         EXIT: TOOL RESULT EXPLAINED TO USER                      │
+│                                                                  │
+│  User sees: Natural language explanation of tool result         │
+│  Behind scenes: Tool was called, result processed, explained    │
+│  Message history: Contains both tool call and result            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Multi-Turn Tool Calling Example
+
+```
+CONVERSATION FLOW:
+
+Turn 1:
+  User: "Create a folder called 'projects' and then list all folders"
+
+Turn 2:
+  AI: Generates MCP call for create_directory
+  ```json:mcp:filesystem
+  {
+    "method": "tools/call",
+    "params": {
+      "name": "create_directory",
+      "arguments": { "path": "/Users/username/projects" }
+    }
+  }
+  ```
+
+Turn 3:
+  System: Executes tool, injects response
+  ```json:mcp-response:filesystem
+  { "content": [{ "type": "text", "text": "Directory created" }] }
+  ```
+
+Turn 4:
+  AI: Receives confirmation, makes SECOND tool call
+  ```json:mcp:filesystem
+  {
+    "method": "tools/call",
+    "params": {
+      "name": "list_allowed_directories",
+      "arguments": {}
+    }
+  }
+  ```
+
+Turn 5:
+  System: Executes second tool, injects response
+  ```json:mcp-response:filesystem
+  {
+    "content": [{
+      "type": "text",
+      "text": "/Users/username/\n/Users/username/projects/\n..."
+    }]
+  }
+  ```
+
+Turn 6:
+  AI: Processes both results, responds to user
+  "I've created the 'projects' folder. Here are all your folders:
+   - Home directory
+   - projects (newly created)
+   - ..."
+```
+
+### MCP Tools Template Injection
+
+**How available tools are communicated to AI:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│         getMessagesWithMemory() - MCP Section                    │
+│  File: chat.ts:205-224                                          │
+│  Function: getMcpSystemPrompt()                                 │
+│                                                                  │
+│  IF MCP enabled:                                                │
+│                                                                  │
+│    1. Get MCP_SYSTEM_TEMPLATE from constant.ts:306-421          │
+│                                                                  │
+│    2. Build tools list for each client:                         │
+│       FOR EACH client in clientsMap:                            │
+│         toolsList += MCP_TOOLS_TEMPLATE                         │
+│         Replace {{clientId}} with client ID                     │
+│         Replace {{tools}} with JSON.stringify(client.tools)     │
+│                                                                  │
+│    3. Inject tools into MCP_SYSTEM_TEMPLATE:                    │
+│       Replace {{MCP_TOOLS}} with all toolsList                  │
+│                                                                  │
+│  Example Result:                                                │
+│  ┌───────────────────────────────────────────────────────────┐ │
+│  │ You are an AI assistant with access to system tools.     │ │
+│  │                                                            │ │
+│  │ 1. AVAILABLE TOOLS:                                       │ │
+│  │                                                            │ │
+│  │ [clientId]                                                │ │
+│  │ filesystem                                                │ │
+│  │ [tools]                                                   │ │
+│  │ [                                                         │ │
+│  │   {                                                       │ │
+│  │     "name": "read_file",                                  │ │
+│  │     "description": "Read contents of a file",             │ │
+│  │     "inputSchema": {                                      │ │
+│  │       "type": "object",                                   │ │
+│  │       "properties": {                                     │ │
+│  │         "path": { "type": "string" }                      │ │
+│  │       },                                                  │ │
+│  │       "required": ["path"]                                │ │
+│  │     }                                                      │ │
+│  │   },                                                      │ │
+│  │   ...more tools...                                        │ │
+│  │ ]                                                         │ │
+│  │                                                            │ │
+│  │ 2. WHEN TO USE TOOLS: [instructions...]                  │ │
+│  │ 3. HOW TO USE TOOLS: [format examples...]                │ │
+│  └───────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  This prompt is inserted as system message BEFORE user message  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Error Handling
+
+**Client Initialization Failure:**
+```
+Error during MCP init → clientsMap[id].errorMsg = error
+                     → clientsMap[id].status = "error"
+                     → Toast notification shown to user
+```
+
+**Tool Execution Failure:**
+```
+Tool call error → Catch in executeMcpAction
+               → Show error toast
+               → Throw error to chat
+               → AI sees error message
+               → AI can retry with different arguments or different tool
+```
+
+**Invalid JSON Format:**
+```
+AI generates wrong format → JSON parse error
+                         → Error injected as MCP response
+                         → AI receives error, learns from mistake
+                         → MCP_SYSTEM_TEMPLATE includes examples of
+                           WRONG formats to avoid
+```
+
+### Data Transformation
+
+**Tool Definition (from MCP server) → AI-readable format:**
+```javascript
+// MCP Server provides
+{
+  name: "write_file",
+  description: "Write content to a file",
+  inputSchema: {
+    type: "object",
+    properties: {
+      path: { type: "string", description: "File path" },
+      content: { type: "string", description: "Content to write" }
+    },
+    required: ["path", "content"]
+  }
+}
+
+// Injected into MCP_SYSTEM_TEMPLATE as:
+{
+  "name": "write_file",
+  "description": "Write content to a file",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "File path" },
+      "content": { "type": "string", "description": "Content to write" }
+    },
+    "required": ["path", "content"]
+  }
+}
+
+// AI generates tool call
+{
+  "method": "tools/call",
+  "params": {
+    "name": "write_file",
+    "arguments": {
+      "path": "/Users/test/file.txt",
+      "content": "Hello World"
+    }
+  }
+}
+
+// System executes → Result
+{
+  "content": [{
+    "type": "text",
+    "text": "File written successfully"
+  }]
+}
+```
+
+### Performance Notes
+- **One Tool Per Turn:** MCP enforces one tool call per message to prevent chaos
+- **Client Reuse:** MCP clients persist across conversation, avoiding reconnection overhead
+- **Async Execution:** Tool calls are async, allowing long-running operations
+- **Error Recovery:** AI can retry failed tools with corrected parameters
+
+---
