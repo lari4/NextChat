@@ -554,3 +554,97 @@ Okay, I am a professional internet article writer, very skilled at writing conte
 - Flexible content types (articles, summaries, intros, endings)
 
 ---
+
+## 6. Image Generation Prompts
+
+These prompts are used for AI-powered image generation through different services.
+
+### 6.1 Stable Diffusion Panel
+
+**Location:** `app/components/sd/sd-panel.tsx`
+
+**Purpose:** Provides a structured interface for generating images using Stable Diffusion models (SD3 Medium, SD3 Large, SD3 Large Turbo). Users can specify both positive and negative prompts along with various image parameters.
+
+**Prompt Fields:**
+
+#### 6.1.1 Prompt (Main Description)
+- **Type:** Textarea
+- **Required:** Yes
+- **Placeholder:** Localized text requesting user input
+- **Purpose:** Main description of what the user wants to generate
+- **Field Name:** `prompt`
+
+**Example:**
+```
+A majestic mountain landscape at sunset, photorealistic, 8k resolution, cinematic lighting
+```
+
+---
+
+#### 6.1.2 Negative Prompt
+- **Type:** Textarea
+- **Required:** No
+- **Placeholder:** Localized text requesting user input
+- **Purpose:** Specifies what should NOT appear in the generated image
+- **Field Name:** `negative_prompt`
+
+**Example:**
+```
+blurry, low quality, distorted, ugly, deformed, watermark, text, signature
+```
+
+---
+
+#### 6.1.3 Model Selection
+**Available Models:**
+- SD3 Medium (default)
+- SD3 Large
+- SD3 Large Turbo
+
+**Supported Providers:** SD3
+
+---
+
+#### 6.1.4 Additional Parameters
+**Aspect Ratio Options:**
+- 1:1 (Square, default)
+- 16:9 (Widescreen)
+- 21:9 (Ultra-wide)
+- 2:3 (Portrait)
+- 3:2 (Landscape)
+- 4:5 (Portrait)
+- 5:4 (Landscape)
+- 9:16 (Vertical)
+- 9:21 (Tall vertical)
+
+**Implementation Notes:**
+- Integrates with Stable Diffusion 3 API
+- Supports multiple aspect ratios for different use cases
+- Negative prompts help refine image quality
+- Model selection allows balance between speed and quality
+
+---
+
+### 6.2 Pollinations.ai Integration (via AI Text-to-Image Mask)
+
+**Location:** `app/masks/cn.ts:4-48` (See Section 4.1)
+
+**Purpose:** Generates images via markdown syntax using pollinations.ai API. The AI automatically enriches user prompts with professional photography terminology.
+
+**URL Format:**
+```
+![description](https://image.pollinations.ai/prompt/{description}?nologo=true)
+```
+
+**Example Workflow:**
+1. User: "A cat sitting on a windowsill"
+2. AI enriches to: "A fluffy domestic cat sitting elegantly on a wooden windowsill, soft natural lighting, golden hour, shallow depth of field f/2.8, cozy home interior, professional pet photography, high detail"
+3. AI outputs markdown (not in code block) for immediate rendering
+
+**Implementation Notes:**
+- Automatic prompt enhancement
+- URL encoding of special characters
+- Direct markdown rendering (no code blocks)
+- No logo watermark (`nologo=true`)
+
+---
