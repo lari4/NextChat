@@ -837,3 +837,155 @@ You are an AI assistant with access to system tools. Your role is to help users 
 - Can be customized for specific voice chat behaviors
 
 ---
+
+## 8. External Community Prompts
+
+These prompts are fetched from external repositories and provide hundreds of pre-built AI assistant roles and scenarios.
+
+### 8.1 Awesome ChatGPT Prompts Integration
+
+**Location:** `scripts/fetch-prompts.mjs`, stored in `public/prompts.json`
+
+**Purpose:** Integrates community-curated prompts from the awesome-chatgpt-prompts repositories, providing users with instant access to hundreds of specialized assistant personalities and use cases.
+
+**Source Repositories:**
+
+#### 8.1.1 English Prompts
+- **Repository:** `f/awesome-chatgpt-prompts`
+- **File:** `main/prompts.csv`
+- **Format:** CSV (act, prompt)
+- **Language:** English
+
+#### 8.1.2 Simplified Chinese Prompts
+- **Repository:** `PlexPt/awesome-chatgpt-prompts-zh`
+- **File:** `main/prompts-zh.json`
+- **Format:** JSON
+- **Language:** Simplified Chinese
+
+#### 8.1.3 Traditional Chinese Prompts
+- **Repository:** `PlexPt/awesome-chatgpt-prompts-zh`
+- **File:** `main/prompts-zh-TW.json`
+- **Format:** JSON
+- **Language:** Traditional Chinese
+
+---
+
+### 8.2 Prompt Categories (Examples from Community)
+
+The community prompts cover a wide range of categories, including but not limited to:
+
+**Professional Roles:**
+- Linux Terminal
+- Excel Sheet
+- English Translator
+- Position Interviewer
+- JavaScript Console
+- SQL Terminal
+- Regex Generator
+- IT Architect
+- Cyber Security Specialist
+- Data Scientist
+- Legal Advisor
+- Financial Analyst
+- Chef
+- Doctor
+- Accountant
+
+**Creative & Entertainment:**
+- Storyteller
+- Stand-up Comedian
+- Poet
+- Rapper
+- Novelist
+- Screenwriter
+- Composer
+- Magician
+- Motivational Speaker
+- Philosopher
+- Artist Advisor
+
+**Educational:**
+- Math Teacher
+- Debate Coach
+- Essay Writer
+- English Pronunciation Helper
+- Language Tutor
+- Etymology Expert
+- Historian
+- Philosopher
+- Scientific Data Visualizer
+
+**Personal & Lifestyle:**
+- Life Coach
+- Mental Health Adviser
+- Personal Trainer
+- Relationship Coach
+- Travel Guide
+- Personal Stylist
+- Astrologer
+- Dream Interpreter
+- Self-Help Book
+
+---
+
+### 8.3 Implementation Details
+
+**Fetch Process:**
+1. Script runs: `scripts/fetch-prompts.mjs`
+2. Downloads prompts from GitHub repositories
+3. Merges all language versions
+4. Stores in: `public/prompts.json`
+5. Application loads prompts on startup
+
+**Storage Format:**
+```json
+[
+  {
+    "act": "Role Name",
+    "prompt": "Full system/user prompt text..."
+  },
+  ...
+]
+```
+
+**Usage in Application:**
+- Users can browse community prompts in the mask gallery
+- Prompts can be applied to new or existing conversations
+- Each prompt becomes a reusable "mask" (assistant personality)
+- Users can customize community prompts after applying them
+
+**Benefits:**
+- Instant access to 100+ curated prompts
+- Multi-language support
+- Regularly updated from community
+- No manual prompt writing needed for common use cases
+- Diverse range of professional and creative scenarios
+
+---
+
+## Summary
+
+This documentation has cataloged **all AI prompts** used in NextChat across 8 major categories:
+
+1. **System Templates** (4 prompts) - Core system behavior and configuration
+2. **Conversation Management** (3 prompts) - Title generation, summarization, context
+3. **Programming & Development** (4 masks) - Coding assistants and prompt engineers
+4. **Content Creation & Writing** (3 masks) - Image generation, copywriting, ML explanation
+5. **Professional & Educational** (3 masks) - Psychologist, startup ideas, tech writing
+6. **Image Generation** (2 systems) - Stable Diffusion and Pollinations.ai
+7. **MCP Tool Integration** (3 prompts) - System tool access and voice chat
+8. **External Community** (100+ prompts) - Community-curated role-playing scenarios
+
+**Total:** 120+ documented prompts and prompt templates
+
+**Key Files:**
+- `app/constant.ts` - System templates and MCP prompts
+- `app/locales/en.ts` & `app/locales/cn.ts` - Conversation management
+- `app/masks/en.ts`, `app/masks/cn.ts`, `app/masks/tw.ts` - Built-in masks
+- `app/components/sd/sd-panel.tsx` - Stable Diffusion interface
+- `public/prompts.json` - External community prompts
+- `scripts/fetch-prompts.mjs` - Community prompt fetcher
+
+---
+
+*End of PROMPTS_DOCUMENTATION.md*
